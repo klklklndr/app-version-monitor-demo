@@ -1,0 +1,16 @@
+{
+  "android:com.carrefoursa.ecommerce": {
+    "version": "2.5.6",
+    "last_updated": "2026-05-05 15:50:47",
+    "id": "com.carrefoursa.ecommerce",
+    "updated": "2026-05-05",
+    "updated_epoch": 1777979075
+  },
+  "ios:1460593315": {
+    "version": "3.0.18",
+    "last_updated": "2026-04-22 15:10:01",
+    "id": "1460593315",
+    "trackViewUrl": "https://apps.apple.com/us/app/carrefoursa-online-al%C4%B1%C5%9Fveri%C5%9F/id1460593315?uo=4",
+    "trackName": "CarrefourSA Online Al\u0131\u015fveri\u015f"
+  }
+}
