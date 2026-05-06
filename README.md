@@ -1,89 +1,94 @@
-# App Version Monitor
+# App Version Monitor (Demo-Ready)
 
-A lightweight GitHub Actions demo that checks Android and iOS app versions and sends an email alert when a new version is detected.
+This repository is prepared for **copy-paste setup + immediate run** by anyone who clones it.
 
-This is a clean public demo repository. It does not include real client app identifiers, credentials, or production version records.
+It checks Android/iOS app versions and sends an email when a version changes.
 
-## What it does
+## Features
 
-- Checks Android app version from Google Play
-- Checks iOS app version from the App Store Lookup API
-- Compares the latest version with the stored version record
-- Sends an email alert when a new version is detected
-- Updates a runtime version record through GitHub Actions
+- Android version check (Play Store web + `google-play-scraper` fallback)
+- iOS version check (Apple iTunes Lookup API)
+- Multi-app iOS support (`IOS_BUNDLE_ID` accepts comma/semicolon separated IDs)
+- Version state persistence in JSON
+- Email notifications via SMTP
+- Scheduled + manual execution with GitHub Actions
 
-## Setup
+## Repository Layout
 
-Configure the required values under GitHub Actions secrets/variables in the repository settings.
+- `monitor.py` → main script
+- `.github/workflows/monitor.yml` → automation
+- `.env.example` → environment template
+- `version_record.example.json` → safe template state
+- `version_record.json` → runtime state file (gitignored)
+- `QUICKSTART.md` → 5-minute setup
 
-Required values:
-
-| Name | Description | Demo example |
-|---|---|---|
-| `PACKAGE_NAME` | Android package name | `com.example.app` |
-| `IOS_BUNDLE_ID` | iOS bundle ID or App Store ID | `1234567890` |
-| `EMAIL_SENDER` | Sender email address | `sender@example.com` |
-| `EMAIL_PASSWORD` | Email app password or SMTP password | Use repository secret only |
-| `EMAIL_RECIPIENT` | Recipient email address | `recipient@example.com` |
-
-At least one of `PACKAGE_NAME` or `IOS_BUNDLE_ID` is required.
-
-Optional values:
-
-| Name | Default |
-|---|---|
-| `SMTP_SERVER` | `smtp.gmail.com` |
-| `SMTP_PORT` | `587` |
-| `PLAY_LANG` | `en` |
-
-## Manual test
-
-1. Open the **Actions** tab.
-2. Select **App Version Monitor**.
-3. Click **Run workflow**.
-4. Check the workflow logs.
-
-## Schedule
-
-The workflow runs every 30 minutes by default.
-
-To change the schedule, edit:
-
-```text
-.github/workflows/monitor.yml
-```
-
-## Demo version record
-
-This repo includes:
-
-```text
-version_record.example.json
-```
-
-The runtime file is:
-
-```text
-version_record.json
-```
-
-The runtime file is intentionally ignored in this public demo setup.
-
-## Local test
+## 1) Local run (recommended first)
 
 ```bash
+git clone <your-repo-url>
+cd app-version-monitor
+cp .env.example .env
+cp version_record.example.json version_record.json
+python -m venv .venv
+source .venv/bin/activate
 pip install -r requirements.txt
+set -a && source .env && set +a
 python monitor.py
 ```
 
-For local runs, export the same environment variables that are used by GitHub Actions.
+## 2) Required Environment Variables
 
-## Notes
+At least one app identifier is required:
 
-- Do not commit real credentials.
-- Do not commit real client app identifiers to a public demo repo.
-- Keep sensitive values in GitHub Actions secrets.
-- Use the example version record only for documentation.
+- `PACKAGE_NAME` (single Android package) **or** `PACKAGE_NAMES` (comma/semicolon separated multiple Android packages)
+- `IOS_BUNDLE_ID` (bundle id or numeric App Store ID; comma/semicolon separated multiple iOS apps supported)
+
+Email settings are required:
+
+- `EMAIL_SENDER`
+- `EMAIL_PASSWORD`
+- `EMAIL_RECIPIENT`
+
+Optional:
+
+- `SMTP_SERVER` (default: `smtp.gmail.com`)
+- `SMTP_PORT` (default: `587`)
+- `PLAY_LANG` (default: `en`)
+- `VERSION_STORAGE_DIR` (default: script directory)
+
+## 3) GitHub Actions setup
+
+In **Settings → Secrets and variables → Actions**:
+
+### Variables
+- `PACKAGE_NAME` and/or `PACKAGE_NAMES`
+- `IOS_BUNDLE_ID`
+- `EMAIL_RECIPIENT`
+- `SMTP_SERVER`
+- `SMTP_PORT`
+- `PLAY_LANG`
+
+### Secrets
+- `EMAIL_SENDER`
+- `EMAIL_PASSWORD`
+
+Then run:
+
+- **Actions** → **App Version Monitor** → **Run workflow**
+
+## 4) Demo safety
+
+This repository is formatted for public/demo sharing:
+
+- No real credentials in git
+- No real client identifiers required in tracked files
+- Runtime artifacts are ignored via `.gitignore`
+
+## 5) Troubleshooting
+
+- If Android fetch fails, verify package name and region/lang.
+- If iOS lookup fails, test with numeric App Store ID.
+- If email fails, verify SMTP host/port and app password policy.
 
 ## License
 

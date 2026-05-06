@@ -1,0 +1,56 @@
+name: App Version Monitor
+
+on:
+  schedule:
+    - cron: "*/30 * * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  monitor:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Prepare runtime record
+        run: |
+          if [ ! -f version_record.json ]; then
+            cp version_record.example.json version_record.json
+          fi
+
+      - name: Run monitor
+        env:
+          PACKAGE_NAME: ${{ vars.PACKAGE_NAME }}
+          PACKAGE_NAMES: ${{ vars.PACKAGE_NAMES }}
+          IOS_BUNDLE_ID: ${{ vars.IOS_BUNDLE_ID }}
+          EMAIL_SENDER: ${{ secrets.EMAIL_SENDER }}
+          EMAIL_PASSWORD: ${{ secrets.EMAIL_PASSWORD }}
+          EMAIL_RECIPIENT: ${{ vars.EMAIL_RECIPIENT }}
+          SMTP_SERVER: ${{ vars.SMTP_SERVER }}
+          SMTP_PORT: ${{ vars.SMTP_PORT }}
+          PLAY_LANG: ${{ vars.PLAY_LANG }}
+          VERSION_STORAGE_DIR: .
+        run: python monitor.py
+
+      - name: Commit updated version record
+        run: |
+          if git diff --quiet version_record.json; then
+            echo "No version changes"
+          else
+            git config user.name "github-actions[bot]"
+            git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+            git add version_record.json
+            git commit -m "chore: update version record [skip ci]"
+            git push
+          fi
