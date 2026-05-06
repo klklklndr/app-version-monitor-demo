@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.py[cod]
+*.pyo
+*.pyd
+.venv/
+venv/
+
+# Local environment and runtime files
+.env
+version_record.json
+version_events.log
+
+# IDE
+.vscode/
+.idea/
+
+# OS
+.DS_Store

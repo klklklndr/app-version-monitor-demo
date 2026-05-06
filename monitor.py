@@ -26,8 +26,17 @@ class VersionMonitor:
     
     def __init__(self):
         """Initialize the monitor with environment variables."""
-        # Android package name (optional if monitoring iOS only)
-        self.package_name = os.getenv('PACKAGE_NAME')
+        # Android package names (optional if monitoring iOS only)
+        # Supports:
+        # - PACKAGE_NAME="com.example.app" (backward compatible)
+        # - PACKAGE_NAME="com.app1,com.app2"
+        # - PACKAGE_NAMES="com.app1,com.app2"
+        android_packages_raw = os.getenv('PACKAGE_NAMES') or os.getenv('PACKAGE_NAME', '')
+        self.android_packages: List[str] = [
+            p.strip() for p in android_packages_raw.replace(';', ',').split(',') if p.strip()
+        ]
+        # Backward-compatible primary package alias used in some email subject fallbacks
+        self.package_name = self.android_packages[0] if self.android_packages else None
         self.play_lang = os.getenv('PLAY_LANG', 'en')
 
         # iOS identifiers: support multiple separated by comma/semicolon
@@ -56,11 +65,11 @@ class VersionMonitor:
     def _validate_config(self) -> None:
         """Validate that required environment variables are set.
 
-        At least one of PACKAGE_NAME or IOS_BUNDLE_ID must be provided, plus
+        At least one of PACKAGE_NAME/PACKAGE_NAMES or IOS_BUNDLE_ID must be provided, plus
         email sender/password/recipient must be configured.
         """
-        if not (self.package_name or self.ios_ids):
-            raise ValueError("Missing app identifier: set either PACKAGE_NAME or IOS_BUNDLE_ID")
+        if not (self.android_packages or self.ios_ids):
+            raise ValueError("Missing app identifier: set PACKAGE_NAME/PACKAGE_NAMES and/or IOS_BUNDLE_ID")
 
         required = {
             'EMAIL_SENDER': self.email_sender,
@@ -74,10 +83,10 @@ class VersionMonitor:
                 f"Set them via: export VAR=value (locally) or secrets (GitHub Actions)"
             )
 
-    def fetch_android_version(self) -> Optional[Dict[str, Any]]:
+    def fetch_android_version(self, package_name: str) -> Optional[Dict[str, Any]]:
         """Fetch the latest Android version and metadata for the configured package."""
 
-        if not self.package_name:
+        if not package_name:
             return None
 
         best_info: Optional[Dict[str, Any]] = None
@@ -86,10 +95,10 @@ class VersionMonitor:
 
         try:
             print(
-                f"[{self._timestamp()}] Fetching Android version for package: {self.package_name} (lang={self.play_lang})"
+                f"[{self._timestamp()}] Fetching Android version for package: {package_name} (lang={self.play_lang})"
             )
 
-            web_version = self._fetch_android_version_via_web()
+            web_version = self._fetch_android_version_via_web(package_name)
             if web_version:
                 best_info = {'version': web_version}
                 best_source = 'web'
@@ -97,7 +106,7 @@ class VersionMonitor:
             else:
                 attempts.append("web:None")
 
-            scraper_version = self._fetch_android_version_via_scraper()
+            scraper_version = self._fetch_android_version_via_scraper(package_name)
             if scraper_version:
                 attempts.append(
                     f"scraper:{scraper_version.get('version')}|updated:{scraper_version.get('updated')}"
@@ -129,11 +138,11 @@ class VersionMonitor:
             print(f"[{self._timestamp()}] Error fetching Android version: {e}")
             return None
 
-    def _fetch_android_version_via_scraper(self) -> Optional[Dict[str, Any]]:
+    def _fetch_android_version_via_scraper(self, package_name: str) -> Optional[Dict[str, Any]]:
         """Fetch Android version using google_play_scraper."""
 
         try:
-            app_data = app(self.package_name, lang=self.play_lang)
+            app_data = app(package_name, lang=self.play_lang)
             version = app_data.get('version')
             updated = app_data.get('updated')
             if version:
@@ -150,10 +159,10 @@ class VersionMonitor:
             print(f"[{self._timestamp()}] Error fetching Android version via scraper: {inner}; falling back to web scrape")
         return None
 
-    def _fetch_android_version_via_web(self) -> Optional[str]:
+    def _fetch_android_version_via_web(self, package_name: str) -> Optional[str]:
         """Fetch version by scraping the Play Store web page (more closely matches the live site)."""
 
-        url = f"https://play.google.com/store/apps/details?id={self.package_name}&hl={self.play_lang}"
+        url = f"https://play.google.com/store/apps/details?id={package_name}&hl={self.play_lang}"
         headers = {
             'User-Agent': 'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 '
             '(KHTML, like Gecko) Chrome/120.0 Safari/537.36',
@@ -515,12 +524,14 @@ Timestamp: {self._timestamp()}
         
         # Check Android if configured
         any_success = True
-        if self.package_name:
-            android_info = self.fetch_android_version()
-            if not android_info:
-                print(f"[{self._timestamp()}] Failed to fetch Android version. Skipping Android.")
-                any_success = False
-            else:
+        if self.android_packages:
+            for package_name in self.android_packages:
+                android_info = self.fetch_android_version(package_name)
+                if not android_info:
+                    print(f"[{self._timestamp()}] Failed to fetch Android version for {package_name}. Skipping.")
+                    any_success = False
+                    continue
+
                 current_version = android_info.get('version') if isinstance(android_info, dict) else None
                 updated_at = android_info.get('updated') if isinstance(android_info, dict) else None
                 updated_epoch = None
@@ -531,99 +542,100 @@ Timestamp: {self._timestamp()}
                 normalized_updated = self._normalize_updated_date(updated_at)
                 if normalized_updated:
                     print(
-                        f"[{self._timestamp()}] Parsed Android updated date: {normalized_updated} "
+                        f"[{self._timestamp()}] Parsed Android updated date for {package_name}: {normalized_updated} "
                         f"(raw={updated_at})"
                     )
                 if not current_version:
-                    print(f"[{self._timestamp()}] Android fetch returned no version string. Skipping Android.")
+                    print(f"[{self._timestamp()}] Android fetch returned no version string for {package_name}. Skipping.")
                     any_success = False
-                else:
-                    store = self._load_store()
-                    store_key = f"android:{self.package_name}"
-                    stored_entry = store.get(store_key, {}) if isinstance(store, dict) else {}
-                    stored_version = stored_entry.get('version') if isinstance(stored_entry, dict) else stored_entry
-                    stored_updated = stored_entry.get('updated') if isinstance(stored_entry, dict) else None
-                    stored_updated_epoch = stored_entry.get('updated_epoch') if isinstance(stored_entry, dict) else None
+                    continue
 
-                    if stored_version is None:
-                        print(f"[{self._timestamp()}] First Android run detected. Storing version {current_version}")
-                        extra = {'updated': normalized_updated} if normalized_updated else None
+                store = self._load_store()
+                store_key = f"android:{package_name}"
+                stored_entry = store.get(store_key, {}) if isinstance(store, dict) else {}
+                stored_version = stored_entry.get('version') if isinstance(stored_entry, dict) else stored_entry
+                stored_updated = stored_entry.get('updated') if isinstance(stored_entry, dict) else None
+                stored_updated_epoch = stored_entry.get('updated_epoch') if isinstance(stored_entry, dict) else None
+
+                if stored_version is None:
+                    print(f"[{self._timestamp()}] First Android run detected for {package_name}. Storing version {current_version}")
+                    extra = {'updated': normalized_updated} if normalized_updated else None
+                    if updated_epoch is not None:
+                        extra = (extra or {})
+                        extra['updated_epoch'] = updated_epoch
+                    self.store_version('android', package_name, current_version, extra=extra)
+                elif normalized_updated or updated_epoch is not None:
+                    if stored_updated is None and stored_updated_epoch is None:
+                        print(
+                            f"[{self._timestamp()}] Android updated date tracked for {package_name} the first time: {normalized_updated}."
+                        )
+                        extra = {'updated': normalized_updated} if normalized_updated else {}
                         if updated_epoch is not None:
-                            extra = (extra or {})
                             extra['updated_epoch'] = updated_epoch
-                        self.store_version('android', self.package_name, current_version, extra=extra)
-                    elif normalized_updated or updated_epoch is not None:
-                        if stored_updated is None and stored_updated_epoch is None:
-                            print(
-                                f"[{self._timestamp()}] Android updated date tracked for the first time: {normalized_updated}."
-                            )
-                            extra = {'updated': normalized_updated} if normalized_updated else {}
-                            if updated_epoch is not None:
-                                extra['updated_epoch'] = updated_epoch
-                            self.store_version('android', self.package_name, current_version, extra=extra)
-                        else:
-                            updated_changed = False
-                            trend_date = None
-                            if updated_epoch is not None and stored_updated_epoch is not None:
-                                if updated_epoch != stored_updated_epoch:
-                                    updated_changed = True
-                                    trend_date = 1 if updated_epoch > stored_updated_epoch else -1
-                            elif normalized_updated and normalized_updated != stored_updated:
+                        self.store_version('android', package_name, current_version, extra=extra)
+                    else:
+                        updated_changed = False
+                        trend_date = None
+                        if updated_epoch is not None and stored_updated_epoch is not None:
+                            if updated_epoch != stored_updated_epoch:
                                 updated_changed = True
-                                trend_date = self._compare_date_order(normalized_updated, stored_updated)
+                                trend_date = 1 if updated_epoch > stored_updated_epoch else -1
+                        elif normalized_updated and normalized_updated != stored_updated:
+                            updated_changed = True
+                            trend_date = self._compare_date_order(normalized_updated, stored_updated)
 
-                            if updated_changed:
-                                if trend_date == -1:
-                                    self.log_updated_regression(
+                        if updated_changed:
+                            if trend_date == -1:
+                                self.log_updated_regression(
+                                    'android',
+                                    package_name,
+                                    stored_updated or str(stored_updated_epoch),
+                                    normalized_updated or str(updated_epoch),
+                                )
+                            else:
+                                print(
+                                    f"[{self._timestamp()}] Android updated date change detected: "
+                                    f"{stored_updated or stored_updated_epoch} ??' {normalized_updated or updated_epoch}"
+                                )
+                                play_link = f"https://play.google.com/store/apps/details?id={package_name}"
+                                if self.send_email_alert(
+                                    stored_updated or str(stored_updated_epoch),
+                                    normalized_updated or str(updated_epoch),
+                                    title=f"Android: {package_name}",
+                                    link=play_link,
+                                    subject_platform="Android",
+                                ):
+                                    extra = {'updated': normalized_updated} if normalized_updated else {}
+                                    if updated_epoch is not None:
+                                        extra['updated_epoch'] = updated_epoch
+                                    self.store_version('android', package_name, current_version, extra=extra)
+                                    self.log_version_change(
                                         'android',
-                                        self.package_name,
+                                        package_name,
                                         stored_updated or str(stored_updated_epoch),
                                         normalized_updated or str(updated_epoch),
+                                        extra={'version': current_version, 'event': 'android_updated_change'},
                                     )
                                 else:
-                                    print(
-                                        f"[{self._timestamp()}] Android updated date change detected: "
-                                        f"{stored_updated or stored_updated_epoch} ??' {normalized_updated or updated_epoch}"
-                                    )
-                                    play_link = f"https://play.google.com/store/apps/details?id={self.package_name}"
-                                    if self.send_email_alert(
-                                        stored_updated or str(stored_updated_epoch),
-                                        normalized_updated or str(updated_epoch),
-                                        title=f"Android: {self.package_name}",
-                                        link=play_link,
-                                        subject_platform="Android",
-                                    ):
-                                        extra = {'updated': normalized_updated} if normalized_updated else {}
-                                        if updated_epoch is not None:
-                                            extra['updated_epoch'] = updated_epoch
-                                        self.store_version('android', self.package_name, current_version, extra=extra)
-                                        self.log_version_change(
-                                            'android',
-                                            self.package_name,
-                                            stored_updated or str(stored_updated_epoch),
-                                            normalized_updated or str(updated_epoch),
-                                            extra={'version': current_version, 'event': 'android_updated_change'},
-                                        )
-                                    else:
-                                        any_success = False
-                    else:
-                        trend = self._compare_version_order(current_version, stored_version)
-                        if trend == -1:
-                            self.log_version_regression('android', self.package_name, stored_version, current_version)
-                        elif trend == 1 and current_version != stored_version:
-                            print(f"[{self._timestamp()}] Android version change detected: {stored_version} → {current_version}")
-                            play_link = f"https://play.google.com/store/apps/details?id={self.package_name}"
-                            if self.send_email_alert(
-                                stored_version,
-                                current_version,
-                                title=f"Android: {self.package_name}",
-                                link=play_link,
-                                subject_platform="Android",
-                            ):
-                                self.store_version('android', self.package_name, current_version)
-                                self.log_version_change('android', self.package_name, stored_version, current_version)
-                            else:
-                                any_success = False
+                                    any_success = False
+                else:
+                    trend = self._compare_version_order(current_version, stored_version)
+                    if trend == -1:
+                        self.log_version_regression('android', package_name, stored_version, current_version)
+                    elif trend == 1 and current_version != stored_version:
+                        print(f"[{self._timestamp()}] Android version change detected for {package_name}: {stored_version} → {current_version}")
+                        play_link = f"https://play.google.com/store/apps/details?id={package_name}"
+                        if self.send_email_alert(
+                            stored_version,
+                            current_version,
+                            title=f"Android: {package_name}",
+                            link=play_link,
+                            subject_platform="Android",
+                        ):
+                            self.store_version('android', package_name, current_version)
+                            self.log_version_change('android', package_name, stored_version, current_version)
+                        else:
+                            any_success = False
 
         # Check iOS identifiers if configured
         if self.ios_ids:
